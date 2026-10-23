@@ -63,7 +63,7 @@ const wchar_t* QuotaPlugin::GetInfo(PluginInfoIndex index)
     case TMI_COPYRIGHT:
         return L"";
     case TMI_VERSION:
-        return L"1.1.0";
+        return L"1.1.1";
     case TMI_URL:
         return L"";
     default:

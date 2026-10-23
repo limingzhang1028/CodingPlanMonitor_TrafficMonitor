@@ -134,6 +134,12 @@ std::vector<ProviderQuota> QuotaService::SelectedQuotas() const
     return result;
 }
 
+int QuotaService::SelectedDisplayCount() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return static_cast<int>(selected_ids_.size());
+}
+
 std::vector<ProviderRow> QuotaService::ProviderRows() const
 {
     std::lock_guard<std::mutex> lock(mutex_);

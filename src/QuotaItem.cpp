@@ -9,31 +9,48 @@
 namespace quota {
 namespace {
 
+// The display font size in DC units: 9 pt, the same size TrafficMonitor uses
+// for its own taskbar text. Derived from the DC's DPI (not from the item
+// height) so that measuring in GetItemWidthEx and drawing in DrawItem always
+// use the same font and the returned width is exact.
+int BaseFontHeight(HDC dc)
+{
+    return MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72);
+}
+
+HFONT CreateItemFont(int height)
+{
+    LOGFONTW font_info{};
+    font_info.lfHeight = -height;
+    font_info.lfWeight = FW_NORMAL;
+    font_info.lfCharSet = DEFAULT_CHARSET;
+    wcscpy_s(font_info.lfFaceName, L"Microsoft YaHei UI");
+    return CreateFontIndirectW(&font_info);
+}
+
+int MeasureTextWidth(HDC dc, const wchar_t* text)
+{
+    SIZE size{};
+    GetTextExtentPoint32W(dc, text, static_cast<int>(wcslen(text)), &size);
+    return size.cx;
+}
+
 // Draws text centered in rect, shrinking the font proportionally when the text
-// is wider than the rect.
+// is wider than the rect. With GetItemWidthEx returning the measured width
+// this should never trigger; it stays as a fallback for narrow layouts.
 void DrawFittedText(HDC dc, const wchar_t* text, const RECT& rect, int base_font_height)
 {
-    auto make_font = [](int height) {
-        LOGFONTW font_info{};
-        font_info.lfHeight = -height;
-        font_info.lfWeight = FW_NORMAL;
-        font_info.lfCharSet = DEFAULT_CHARSET;
-        wcscpy_s(font_info.lfFaceName, L"Microsoft YaHei UI");
-        return CreateFontIndirectW(&font_info);
-    };
-
-    HFONT font = make_font(base_font_height);
+    HFONT font = CreateItemFont(base_font_height);
     HGDIOBJ previous_font = SelectObject(dc, font);
 
     const int available = rect.right - rect.left - 4;
-    SIZE text_size{};
-    GetTextExtentPoint32W(dc, text, static_cast<int>(wcslen(text)), &text_size);
-    if (text_size.cx > available && base_font_height > 8)
+    const int text_width = MeasureTextWidth(dc, text);
+    if (text_width > available && base_font_height > 8)
     {
-        const int scaled = max(8, base_font_height * available / text_size.cx);
+        const int scaled = max(8, base_font_height * available / text_width);
         SelectObject(dc, previous_font);
         DeleteObject(font);
-        font = make_font(scaled);
+        font = CreateItemFont(scaled);
         previous_font = SelectObject(dc, font);
     }
 
@@ -111,10 +128,50 @@ bool QuotaItem::IsCustomDraw() const
 
 int QuotaItem::GetItemWidth() const
 {
-    // Single-provider lines ("4.7h 98%") fit in about 100 px. Two-provider
-    // lines ("Kimi 4.0h 84% 4.8d 81%") need more room; without it the fitted
-    // font shrinks below readability.
-    return service_.SelectedQuotas().size() >= 2 ? 150 : 100;
+    // Legacy fallback for plugin API < 3 hosts; TrafficMonitor >= 1.84 uses
+    // GetItemWidthEx. Based on the persisted selection count so the value does
+    // not flip while providers are still loading.
+    return service_.SelectedDisplayCount() >= 2 ? 150 : 100;
+}
+
+int QuotaItem::GetItemWidthEx(void* hDC) const
+{
+    HDC dc = static_cast<HDC>(hDC);
+    if (dc == nullptr)
+        return 0;
+
+    // Measure with the same font DrawItem uses; the returned width is in DC
+    // units and TrafficMonitor does not scale it any further.
+    HFONT font = CreateItemFont(BaseFontHeight(dc));
+    HGDIOBJ previous_font = SelectObject(dc, font);
+
+    int width = 0;
+    if (service_.SelectedDisplayCount() >= 2)
+    {
+        // Real provider names + worst-case values, so the width stays stable
+        // as numbers change but follows provider renames.
+        for (const ProviderQuota& provider : service_.SelectedQuotas())
+        {
+            const std::wstring sample =
+                provider.provider_name + L" 5.0h 100% 7.0d 100%!";
+            width = max(width, MeasureTextWidth(dc, sample.c_str()));
+        }
+        if (width == 0)
+        {
+            // Providers not loaded yet (startup): keep two-provider room.
+            width = MeasureTextWidth(dc, L"Kimi S 5.0h 100% 7.0d 100%!");
+        }
+    }
+    else
+    {
+        width = max(MeasureTextWidth(dc, L"5.0h 100%"),
+            MeasureTextWidth(dc, L"7.0d 100%!"));
+    }
+
+    SelectObject(dc, previous_font);
+    DeleteObject(font);
+    // DrawFittedText reserves 4 px; add a little breathing room on top.
+    return width + 8;
 }
 
 void QuotaItem::DrawItem(void* hDC, int x, int y, int w, int h, bool)
@@ -123,7 +180,7 @@ void QuotaItem::DrawItem(void* hDC, int x, int y, int w, int h, bool)
     const std::vector<ProviderQuota> quotas = service_.SelectedQuotas();
 
     const int previous_mode = SetBkMode(dc, TRANSPARENT);
-    const int base_font_height = h * 3 / 8;
+    const int base_font_height = BaseFontHeight(dc);
     const RECT top_rect{ x, y, x + w, y + h / 2 };
     const RECT bottom_rect{ x, y + h / 2, x + w, y + h };
 

@@ -42,6 +42,11 @@ public:
     // Quotas of the currently selected providers, in selection order.
     std::vector<ProviderQuota> SelectedQuotas() const;
 
+    // Number of selected providers (0-2), from the persisted selection only.
+    // Stable while providers and quotas are still loading, unlike
+    // SelectedQuotas().size().
+    int SelectedDisplayCount() const;
+
     // All selectable providers with their selection state and last snapshot.
     std::vector<ProviderRow> ProviderRows() const;
 
